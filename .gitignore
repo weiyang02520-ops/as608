@@ -1,0 +1,21 @@
+# 排除编译生成的二进制文件夹
+Debug/
+Release/
+
+# 排除所有中间目标文件
+*.o
+*.d
+*.crf
+*.htm
+*.dep
+
+# 排除编译生成的最终固件
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+
+# 排除 IDE 的本地设置
+.settings/
+.vscode/
