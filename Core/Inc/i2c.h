@@ -41,7 +41,7 @@ extern I2C_HandleTypeDef hi2c1;
 void MX_I2C1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-
+uint8_t AT24C32_WriteByte(uint16_t addr, uint8_t data);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

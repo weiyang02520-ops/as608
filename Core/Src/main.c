@@ -49,15 +49,80 @@ extern void OLED_ShowTime(void);
 /* USER CODE BEGIN PD */
 #define AT24C32_ADDR    0x57
 #define HAL_AT24C32_ADDR (AT24C32_ADDR << 1)
-#define RECORD_COUNT_ADDR 0x00
-#define RECORD_DATA_START 0x02
+#define RECORD_COUNT_ADDR 0x0000
+#define RECORD_DATA_START 0x0002
+#define DURATION_START_ADDR 0x0E00
 #define BT_RX_BUF_SIZE 64
 
 typedef struct {
     uint16_t id;
-    uint32_t timestamp;
-    uint8_t type;
+    uint32_t timestamp;  // 打卡时间戳(秒)
+    uint8_t type;        // 打卡类型 0:上班 1:下班
 } __attribute__((packed)) Record_t;
+
+// 计算两次打卡的时间差(秒) - 增强版本
+uint32_t CalculateTimeDifference(uint32_t check_in, uint32_t check_out) {
+    // 确保check_in <= check_out
+    if(check_in > check_out) return 0;
+    
+    // 防止溢出，如果差超过24小时(86400秒)则认为异常返回0
+    uint32_t diff = check_out - check_in;
+    return (diff > 86400) ? 0 : diff;
+}
+
+// 获取当前时间戳(秒)
+uint32_t GetCurrentTimestamp(void) {
+    return HAL_RTCEx_GetTimeStamp(&hrtc);
+}
+
+// 保存总时长到EEPROM
+void SaveTotalDuration(uint16_t id, uint32_t duration) {
+    uint16_t addr = DURATION_START_ADDR + id * 4;
+    uint8_t buf[4];
+    
+    buf[0] = (duration >> 24) & 0xFF;
+    buf[1] = (duration >> 16) & 0xFF;
+    buf[2] = (duration >> 8) & 0xFF;
+    buf[3] = duration & 0xFF;
+    
+    HAL_I2C_Mem_Write(&hi2c1, HAL_AT24C32_ADDR, addr, I2C_MEMADD_SIZE_16BIT, buf, 4, 100);
+    
+    HAL_Delay(10);  // 关键延时，确保写入完成
+  }
+
+// 从EEPROM读取总时长
+uint32_t ReadTotalDuration(uint16_t id) {
+    uint16_t addr = DURATION_START_ADDR + id * 4;
+    uint8_t buf[4];
+    
+    HAL_I2C_Mem_Read(&hi2c1, HAL_AT24C32_ADDR, addr, I2C_MEMADD_SIZE_16BIT, buf, 4, 100);
+    return (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
+}
+
+// 累计指纹ID的总工作时长(秒)
+void AccumulateDuration(uint16_t id, uint32_t duration_seconds) {
+    uint32_t current_total = 0;
+    uint16_t addr = DURATION_START_ADDR + id * 4;
+    
+    // 读取现有的总时长(4字节)
+    uint8_t buf[4];
+    HAL_I2C_Mem_Read(&hi2c1, HAL_AT24C32_ADDR, addr, I2C_MEMADD_SIZE_16BIT, buf, 4, 100);
+    current_total = (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
+    
+    // 累计新时长
+    current_total += duration_seconds;
+    
+    // 写回EEPROM (分4次写入确保跨页安全)
+    buf[0] = (current_total >> 24) & 0xFF;
+    buf[1] = (current_total >> 16) & 0xFF;
+    buf[2] = (current_total >> 8) & 0xFF;
+    buf[3] = current_total & 0xFF;
+    
+    for(uint8_t i=0; i<4; i++) {
+        AT24C32_WriteByte(addr+i, buf[i]);
+        HAL_Delay(5);  // 关键延时，确保跨页写入可靠
+    }
+}
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -87,22 +152,24 @@ extern UART_HandleTypeDef huart3;  // 蓝牙串口句柄
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void Menu_ShowMain(void);
-void Process_AddFR(void);
+void Process_AddFR(void); 
 void Process_DelFR(void);
 void Process_ModName(void);
 void Process_ListFR(void);
 void Process_ScanFR(void);
 void Bluetooth_Init(void);
 void Bluetooth_Process(void);
+void Send_All_Ranks_To_Bluetooth(void);
+
 
 // EEPROM 相关函数（若不需要可注释）
-uint8_t AT24C32_WriteByte(uint16_t addr, uint8_t data);
 uint8_t AT24C32_ReadByte(uint16_t addr);
 void AT24C32_WriteRecord(uint16_t index, Record_t *rec);
 Record_t AT24C32_ReadRecord(uint16_t index);
 uint8_t SaveRecord(uint16_t id);
 uint8_t IsSameDay(uint32_t t1, uint32_t t2);
 uint8_t AT24C32_Check(void);
+void Send_Duration_To_Bluetooth(uint16_t id);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -335,6 +402,8 @@ void press_FR(void)
       if (ensure == 0x00) {
         if (seach.mathscore > 60) {
           uint8_t work_type = SaveRecord(seach.pageID);
+          
+
 
           char name[32] = {0};
           if (seach.pageID <= 15) {
@@ -601,37 +670,45 @@ Record_t AT24C32_ReadRecord(uint16_t index)
 }
 
 // ================== 极简版打卡逻辑 (摆脱 time.h 报错) ==================
-// 获取当天的唯一数字标签，比如 20260307
-static uint32_t GetCurrentDayStamp(void)
-{
-    MYRTC_ReadTime();
-    return (uint32_t)MYRTC_Time[0] * 10000 + (uint32_t)MYRTC_Time[1] * 100 + (uint32_t)MYRTC_Time[2];
-}
-
 uint8_t SaveRecord(uint16_t id)
 {
     if (recordCount >= 580) return 0;
 
-    uint32_t today_stamp = GetCurrentDayStamp();
+    MYRTC_ReadTime();
+    uint32_t current_time = MYRTC_Time[3] * 60 + MYRTC_Time[4] + MYRTC_Time[5]; // 小时转分钟 + 分钟
     uint8_t determined_type = 0;
+    uint32_t last_check_in = 0;
 
+    // 查找该指纹ID的最后一条记录
     if (recordCount > 0) {
         for (int16_t i = recordCount - 1; i >= 0; i--) {
             Record_t rec = AT24C32_ReadRecord(i);
             if (rec.id == id) {
-                if (rec.timestamp == today_stamp) {
-                    determined_type = (rec.type == 0) ? 1 : 0;
-                } else {
-                    determined_type = 0;
+                if(rec.type == 0) { // 找到最后一条上班记录
+                    last_check_in = rec.timestamp;
                 }
+                determined_type = (rec.type == 0) ? 1 : 0;
                 break;
             }
         }
     }
 
+    // 如果是下班打卡且找到对应的上班记录，则计算工作时间
+    if(determined_type == 1 && last_check_in != 0) {
+        uint32_t duration = CalculateTimeDifference(last_check_in, current_time);
+        if(duration > 0) {
+            uint32_t total_duration = ReadTotalDuration(id);
+            total_duration += duration;
+            SaveTotalDuration(id, total_duration);
+            
+            // 通过蓝牙发送更新
+            Send_Duration_To_Bluetooth(id);
+        }
+    }
+
     Record_t rec;
     rec.id = id;
-    rec.timestamp = today_stamp;
+    rec.timestamp = current_time; // 使用RTC时间戳
     rec.type = determined_type;
 
     AT24C32_WriteRecord(recordCount, &rec);
@@ -688,6 +765,23 @@ int main(void)
   }
 
   Menu_ShowMain();
+
+
+  
+
+// --- 暴力测试开始 ---
+uint32_t force_val = 60; // 强行存入 60 秒
+uint8_t test_buf[4] = {0, 0, 0, 60}; 
+
+// 直接用最原始的 HAL 库命令写一次
+HAL_I2C_Mem_Write(&hi2c1, 0xAE, 0x0E00 + (5 * 4), I2C_MEMADD_SIZE_16BIT, test_buf, 4, 100);
+HAL_Delay(20); // 必须等！
+
+// --- 暴力测试结束 ---
+
+
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -702,6 +796,7 @@ int main(void)
       else if (key == KEY_LIST) Process_ListFR();
       else if (key == KEY_DEL_SPEC) Process_DelFR();
       else if (key == KEY_MOD_NAME) Process_ModName();
+      else if (key == 8) Send_All_Ranks_To_Bluetooth();
     } else {
       press_FR();
     }
@@ -746,6 +841,85 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+
+
+
+
+/**
+  * @brief  一键发送所有人的打卡排行榜到手机
+  */
+void Send_All_Ranks_To_Bluetooth(void)
+{
+    char buffer[50];
+    uint32_t total_duration = 0;
+    
+    OLED_Clear();
+    OLED_ShowString(0, 2, (uint8_t*)"Sending...");
+
+    // 🚀【核心测试：强行发一个 99 号员工，时长 3600 秒】
+    // 如果手机收到了这个，说明整个蓝牙通道、小程序解析全部是完美的！
+    char test_msg[] = "USER:99,TOTAL:3600\n"; 
+    HAL_UART_Transmit(&huart3, (uint8_t*)test_msg, strlen(test_msg), 100);
+    HAL_Delay(100); // 给蓝牙一点喘息时间
+
+    // 原有的遍历逻辑
+    for(uint16_t id = 1; id <= ValidN; id++) 
+    {
+        uint16_t addr = 0x0E00 + (id * 4);
+        HAL_I2C_Mem_Read(&hi2c1, 0xA0, addr, I2C_MEMADD_SIZE_16BIT, (uint8_t*)&total_duration, 4, 100);
+        
+        if(total_duration > 0)
+        {
+            sprintf(buffer, "USER:%02d,TOTAL:%lu\n", id, total_duration);
+            HAL_UART_Transmit(&huart3, (uint8_t*)buffer, strlen(buffer), 100);
+            HAL_Delay(50); 
+        }
+    }
+    
+    OLED_Clear();
+    OLED_ShowString(0, 2, (uint8_t*)"Send OK!");
+    HAL_Delay(1000);
+    Menu_ShowMain();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/**
+
+  * @brief  发送指定用户的累计打卡时长到蓝牙串口
+
+  * @param  id: 用户指纹ID
+
+  */
+void Send_Duration_To_Bluetooth(uint16_t id)
+{
+    char buffer[50];
+    uint32_t total_duration = 0;
+
+    // 第一步：直接调用你写好的读取工具，它会自动去 0xAE 地址拿数据，并拼好字节
+    total_duration = ReadTotalDuration(id); 
+
+    // 第二步：把拿到的数变成手机认得的字符串
+    // 注意这里最后一定要带 \n，那是给手机的“句号”
+    sprintf(buffer, "USER:%02d,TOTAL:%lu\n", id, total_duration);
+
+    // 第三步：通过 huart3（蓝牙）发出去
+    HAL_UART_Transmit(&huart3, (uint8_t*)buffer, strlen(buffer), 100);
+}
+
 
 /* USER CODE END 4 */
 

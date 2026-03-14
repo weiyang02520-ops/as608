@@ -500,6 +500,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         // 兼容不同的手机助手，无论是发 \n 还是 \r 都能识别！
         if (bt_rx_byte == '\n' || bt_rx_byte == '\r')
         {
+            bt_rx_buf[bt_rx_len] = '\0';
             bt_rx_complete = 1;
         }
 
@@ -512,11 +513,11 @@ void Bluetooth_Process(void)
 {
     if (bt_rx_complete)
     {
-        bt_rx_buf[bt_rx_len] = '\0';  // 添加字符串结束符
+        bt_rx_buf[bt_rx_len] = '\0';  // 添加字符串结束符，确保 strstr 正常工作
 
-        // 命令格式: SET_TIME=2026-03-08 12:30:00
+        // 1. 处理同步时间指令
         if (strncmp((char*)bt_rx_buf, "SET_TIME=", 9) == 0) {
-            int year, month, day, hour, min, sec; // 使用 int 最稳妥，防止解析失败
+            int year, month, day, hour, min, sec; 
             int ret = sscanf((char*)bt_rx_buf + 9, "%d-%d-%d %d:%d:%d",
                              &year, &month, &day, &hour, &min, &sec);
             if (ret == 6) {
@@ -531,14 +532,19 @@ void Bluetooth_Process(void)
                 extern void MYRTC_SetTime(void);
                 MYRTC_SetTime();
 
-                // 显示提示
                 OLED_Clear();
                 OLED_ShowString(20, 2, (uint8_t*)"Time OK!");
                 HAL_Delay(1000);
             }
         }
+        
+        // 2. 【👇这是新增的灵魂逻辑👇】处理索要排行榜指令
+        else if (strstr((char*)bt_rx_buf, "GET_RANK") != NULL) {
+            // 收到手机呼叫，立刻启动“全量数据上报”大招
+            Send_All_Ranks_To_Bluetooth();
+        }
 
-        // 清空缓冲区，迎接下一次
+        // 处理完一定要彻底清空，迎接下一次暗号
         memset(bt_rx_buf, 0, BT_RX_BUF_SIZE);
         bt_rx_len = 0;
         bt_rx_complete = 0;
