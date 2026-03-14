@@ -8,10 +8,11 @@
 #define KEY_CONFIRM    11   // 确认键
 #define KEY_CANCEL     12   // 取消键
 
-#define KEY_DEL_SPEC    13   // 按ID删除
-#define KEY_MOD_NAME    14   // 修改名字
-#define KEY_ADD         15   // 增加录入
-#define KEY_LIST        16   // 列表
+// ==== 菜单系统专用按键 ====
+#define KEY_UP          13  
+#define KEY_DOWN        14  
+#define KEY_MENU_ENTER  15  
+#define KEY_MENU_EXIT   16
 
 uint8_t InputName(char *name, uint8_t maxLen);
 uint8_t Key_Scan(void);

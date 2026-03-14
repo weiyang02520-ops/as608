@@ -156,11 +156,14 @@ void Process_AddFR(void);
 void Process_DelFR(void);
 void Process_ModName(void);
 void Process_ListFR(void);
-void Process_ScanFR(void);
+void Process_ChangePwd(void);
+void Process_EmptyFR(void);
 void Bluetooth_Init(void);
 void Bluetooth_Process(void);
 void Send_All_Ranks_To_Bluetooth(void);
-
+void UI_DrawMenu(void);
+void InitAdminPassword(void);
+void Process_ResetTime(void);
 
 // EEPROM 相关函数（若不需要可注释）
 uint8_t AT24C32_ReadByte(uint16_t addr);
@@ -209,7 +212,6 @@ void Add_FR(char *name)
         OLED_ShowCHinese(52,3,6); // 按
         OLED_ShowCHinese(68,3,7); // 手
         OLED_ShowCHinese(84,3,8); // 指
-
 
         ensure = GZ_GetImage();
         if (ensure == 0x00)
@@ -321,11 +323,10 @@ void Add_FR(char *name)
                 uint8_t digits = (ID >= 100) ? 3 : (ID >= 10 ? 2 : 1);
                 OLED_ShowNum(60, 2, ID, digits, 16);
 
-
                 if (write_res == 0x00)
                 {
-                	OLED_ShowCHinese(68,3,11); // 成
-                	OLED_ShowCHinese(84,3,12); // 功
+                  OLED_ShowCHinese(68,3,11); // 成
+                  OLED_ShowCHinese(84,3,12); // 功
                 } else
                 {
                     OLED_ShowCHinese(52,3,23); // 错
@@ -354,15 +355,7 @@ void Add_FR(char *name)
       default: break;
     }
 
-
-
-
-
-
     HAL_Delay(800);
-
-
-
 
     if (i == 10)
     {
@@ -373,16 +366,8 @@ void Add_FR(char *name)
       HAL_Delay(1000);
       break;
     }
-
-
-
   }
-
-
-
-
 }
-
 
 // ================== 刷指纹函数 (防闪屏优化版) ==================
 void press_FR(void)
@@ -390,8 +375,6 @@ void press_FR(void)
   SearchResult seach;
   uint8_t ensure;
 
-  // 【优化1】删掉这里的 OLED_Clear() 和静态汉字绘制！
-  // 直接覆盖刷新时间，不闪屏！
   OLED_ShowTime();
 
   ensure = GZ_GetImage();
@@ -403,8 +386,6 @@ void press_FR(void)
         if (seach.mathscore > 60) {
           uint8_t work_type = SaveRecord(seach.pageID);
           
-
-
           char name[32] = {0};
           if (seach.pageID <= 15) {
             GZ_ReadNotepad(seach.pageID, (uint8_t*)name);
@@ -469,11 +450,12 @@ void press_FR(void)
         HAL_Delay(1000);
       }
 
-      // 【优化2】指纹处理完（无论是成功还是失败），强制恢复主界面！
+      // 【优化2】指纹处理完，强制恢复主界面！
       Menu_ShowMain();
     }
   }
 }
+
 // ================== 显示主界面 ==================
 void Menu_ShowMain(void)
 {
@@ -484,79 +466,107 @@ void Menu_ShowMain(void)
   OLED_ShowCHinese(72, 0, 3);
   OLED_ShowCHinese(90, 0, 4);
 
-
   OLED_ShowTime();
 }
 
-// ================== 录入指纹（带名字输入）==================
-void Process_AddFR(void)
-{
-  char pwd[7];
-  if (InputPassword(pwd, 7)) {
-    if (strcmp(pwd, "123456") == 0) {
-      char name[32];
-      if (InputName(name, 32)) Add_FR(name);
-    } else {
-      OLED_Clear();
-      OLED_ShowString(20, 2, (uint8_t*)"Wrong PWD");
-      HAL_Delay(1000);
+// ==================== 菜单系统与密码管理 ====================
+uint8_t system_mode = 0; // 0: 待机打卡, 1: 菜单模式
+uint8_t menu_cursor = 0;
+uint8_t menu_offset = 0;
+
+#define MENU_ITEM_COUNT 7
+const char* menu_items[MENU_ITEM_COUNT] = {
+    "1.Add User",
+    "2.Del User",
+    "3.Mod Name",
+    "4.View List",
+    "5.Change PWD",
+    "6.Del All FR",
+    "7.Reset Time"
+};
+
+char admin_pwd[7] = "123456"; // 内存中的密码缓存
+
+// 初始化密码 (开机时调用 - 严防乱码版)
+void InitAdminPassword(void) {
+    uint8_t is_valid = 1;
+    
+    // 1. 先探测一遍 EEPROM 里的 6 个字节是不是纯数字
+    for(int i = 0; i < 6; i++) {
+        uint8_t c = AT24C32_ReadByte(0x0100 + i);
+        if (c < '0' || c > '9') {
+            is_valid = 0; // 只要有一个不是数字，就是乱码！
+            break;
+        }
     }
-  }
-  Menu_ShowMain();
+
+    if (!is_valid) {
+        // 2. 发现乱码！强制重置为默认密码 123456 并写入 EEPROM
+        strcpy(admin_pwd, "123456");
+        for(int i = 0; i < 6; i++) {
+            AT24C32_WriteByte(0x0100 + i, admin_pwd[i]);
+        }
+    } else {
+        // 3. 数据很健康，放心读入内存
+        for(int i = 0; i < 6; i++) {
+            admin_pwd[i] = AT24C32_ReadByte(0x0100 + i);
+        }
+    }
+    admin_pwd[6] = '\0'; // 加上字符串结尾
 }
 
-// ================== 按ID删除指纹 ==================
-void Process_DelFR(void)
-{
-  char pwd[7];
-  if (InputPassword(pwd, 7)) {
-    if (strcmp(pwd, "123456") == 0) {
-      OLED_Clear();
-      OLED_ShowString(0, 0, (uint8_t*)"Enter ID to del:");
-      OLED_ShowString(0, 2, (uint8_t*)"(1-300)");
-      uint16_t id = InputNumber(3, 0, 4);
-      if (id != 0xFFFF && id >= 1 && id <= 300) {
+// 渲染菜单 (无闪烁滚动)
+void UI_DrawMenu(void) {
+    OLED_ShowString(0, 0, (uint8_t*)"-- Admin Menu --");
+    for(uint8_t i = 0; i < 3; i++) {
+        uint8_t idx = menu_offset + i;
+        if(idx < MENU_ITEM_COUNT) {
+            if(idx == menu_cursor) OLED_ShowString(0, 2+i*2, (uint8_t*)"->");
+            else OLED_ShowString(0, 2+i*2, (uint8_t*)"  ");
+            
+            char buf[15];
+            sprintf(buf, "%-14s", menu_items[idx]);
+            OLED_ShowString(16, 2+i*2, (uint8_t*)buf);
+        } else {
+            OLED_ShowString(0, 2+i*2, (uint8_t*)"                ");
+        }
+    }
+}
+
+// ================== 功能函数 (瘦身版，已移除多余的密码验证) ==================
+
+// 1. 录入指纹
+void Process_AddFR(void) {
+    char name[32];
+    if (InputName(name, 32)) Add_FR(name);
+}
+
+// 2. 按ID删除指纹
+void Process_DelFR(void) {
+    OLED_Clear();
+    OLED_ShowString(0, 0, (uint8_t*)"Enter ID to del:");
+    OLED_ShowString(0, 2, (uint8_t*)"(1-300)");
+    uint16_t id = InputNumber(3, 0, 4);
+    if (id != 0xFFFF && id >= 1 && id <= 300) {
         uint8_t res = GZ_DeletChar(id, 1);
         if (res == 0) {
-          uint8_t zero[32] = {0};
-          GZ_WriteNotepad(id, zero);
-          GZ_ValidTempleteNum(&ValidN);
-          OLED_Clear();
-          OLED_ShowString(20, 2, (uint8_t*)"Delete OK");
-          OLED_ShowString(20, 4, (uint8_t*)"Count:");
-          OLED_ShowNum(80, 4, ValidN, 2, 16);
-          HAL_Delay(2000);
-        } else {
-          OLED_Clear();
-          OLED_ShowString(20, 2, (uint8_t*)"Delete Fail");
-          OLED_ShowNum(80, 3, res, 2, 16);
-          HAL_Delay(2000);
+            uint8_t zero[32] = {0};
+            GZ_WriteNotepad(id, zero);
+            GZ_ValidTempleteNum(&ValidN);
+            OLED_Clear();
+            OLED_ShowString(20, 2, (uint8_t*)"Delete OK");
+            HAL_Delay(1500);
         }
-      } else {
-        OLED_Clear();
-        OLED_ShowString(20, 2, (uint8_t*)"Invalid ID");
-        HAL_Delay(1000);
-      }
-    } else {
-      OLED_Clear();
-      OLED_ShowString(20, 2, (uint8_t*)"Wrong PWD");
-      HAL_Delay(1000);
     }
-  }
-  Menu_ShowMain();
 }
 
-// ================== 修改指纹名字 ==================
-void Process_ModName(void)
-{
-  char pwd[7];
-  if (InputPassword(pwd, 7)) {
-    if (strcmp(pwd, "123456") == 0) {
-      OLED_Clear();
-      OLED_ShowString(0, 0, (uint8_t*)"Enter ID to mod:");
-      OLED_ShowString(0, 2, (uint8_t*)"(1-15)");
-      uint16_t id = InputNumber(3, 0, 4);
-      if (id != 0xFFFF && id >= 1 && id <= 15) {
+// 3. 修改指纹名字
+void Process_ModName(void) {
+    OLED_Clear();
+    OLED_ShowString(0, 0, (uint8_t*)"Enter ID to mod:");
+    OLED_ShowString(0, 2, (uint8_t*)"(1-15)");
+    uint16_t id = InputNumber(3, 0, 4);
+    if (id != 0xFFFF && id >= 1 && id <= 15) {
         uint8_t old_name[32] = {0};
         GZ_ReadNotepad(id, old_name);
         OLED_Clear();
@@ -565,71 +575,129 @@ void Process_ModName(void)
         HAL_Delay(1000);
         char new_name[32];
         if (InputName(new_name, 32)) {
-          uint8_t buf[32] = {0};
-          uint8_t len = 0;
-          while (new_name[len] != 0 && len < 31) {
-            buf[len] = new_name[len];
-            len++;
-          }
-          uint8_t write_res = GZ_WriteNotepad(id, buf);
-          if (write_res == 0) {
-            OLED_Clear();
-            OLED_ShowString(20, 2, (uint8_t*)"Modify OK");
-          } else {
-            OLED_Clear();
-            OLED_ShowString(20, 2, (uint8_t*)"Write Fail");
-            OLED_ShowNum(80, 3, write_res, 2, 16);
-          }
-          HAL_Delay(1000);
+            uint8_t buf[32] = {0};
+            uint8_t len = 0;
+            while (new_name[len] != 0 && len < 31) { buf[len] = new_name[len]; len++; }
+            if (GZ_WriteNotepad(id, buf) == 0) {
+                OLED_Clear();
+                OLED_ShowString(20, 2, (uint8_t*)"Modify OK");
+                HAL_Delay(1500);
+            }
         }
-      } else {
-        OLED_Clear();
-        OLED_ShowString(20, 2, (uint8_t*)"ID out of range");
-        HAL_Delay(1000);
-      }
-    } else {
-      OLED_Clear();
-      OLED_ShowString(20, 2, (uint8_t*)"Wrong PWD");
-      HAL_Delay(1000);
     }
-  }
-  Menu_ShowMain();
 }
 
-// ================== 显示指纹列表（翻页）==================
-void Process_ListFR(void)
-{
-  OLED_Clear();
-  OLED_ShowString(0, 0, (uint8_t*)"Finger List");
-  uint8_t page = 0;
-  uint8_t totalPages = (ValidN + 2) / 3;
-  if (totalPages == 0) totalPages = 1;
-  while (1) {
+// 4. 显示指纹列表（翻页已适配 13上 14下）
+void Process_ListFR(void) {
     OLED_Clear();
-    OLED_ShowString(0, 0, (uint8_t*)"Finger List");
-    OLED_ShowNum(100, 0, page+1, 1, 16);
-    OLED_ShowChar(108, 0, '/');
-    OLED_ShowNum(116, 0, totalPages, 1, 16);
-    for (uint8_t i = 0; i < 3; i++) {
-      uint8_t id = page*3 + i + 1;
-      if (id > ValidN) break;
-      OLED_ShowNum(0, 2 + i*2, id, 2, 16);
-      OLED_ShowChar(20, 2 + i*2, ':');
-      char name[32] = {0};
-      if (id <= 15) {
-        GZ_ReadNotepad(id, (uint8_t*)name);
-        name[31] = 0;
-      } else strcpy(name, "<none>");
-      OLED_ShowString(32, 2 + i*2, (uint8_t*)name);
+    uint8_t page = 0;
+    uint8_t totalPages = (ValidN + 2) / 3;
+    if (totalPages == 0) totalPages = 1;
+    while (1) {
+        OLED_ShowString(0, 0, (uint8_t*)"Finger List");
+        OLED_ShowNum(100, 0, page+1, 1, 16);
+        OLED_ShowChar(108, 0, '/');
+        OLED_ShowNum(116, 0, totalPages, 1, 16);
+        for (uint8_t i = 0; i < 3; i++) {
+            uint8_t id = page*3 + i + 1;
+            if (id > ValidN) {
+                OLED_ShowString(0, 2 + i*2, (uint8_t*)"                "); // 补空行
+                continue;
+            }
+            OLED_ShowNum(0, 2 + i*2, id, 2, 16);
+            OLED_ShowChar(20, 2 + i*2, ':');
+            char name[32] = {0};
+            if (id <= 15) { GZ_ReadNotepad(id, (uint8_t*)name); name[31] = 0; }
+            else strcpy(name, "<none>");
+            char buf[12];
+            sprintf(buf, "%-11s", name);
+            OLED_ShowString(32, 2 + i*2, (uint8_t*)buf);
+        }
+        uint8_t key = Key_Scan();
+        if (key == KEY_CANCEL) break;
+        else if (key == KEY_UP && page > 0) page--;                 // 13 翻上一页
+        else if (key == KEY_DOWN && page < totalPages-1) page++;    // 14 翻下一页
+        HAL_Delay(100);
     }
-    uint8_t key = Key_Scan();
-    if (key == KEY_CANCEL) break;
-    else if (key == KEY_DEL_SPEC && page > 0) page--;
-    else if (key == KEY_MOD_NAME && page < totalPages-1) page++;
-    HAL_Delay(100);
-  }
-  Menu_ShowMain();
 }
+
+// 5. 新增：修改管理员密码
+void Process_ChangePwd(void) {
+    char new_pwd[7];
+    OLED_Clear();
+    OLED_ShowString(0, 0, (uint8_t*)"New PWD:");
+    if (InputPassword(new_pwd, 7)) {
+        for(int i = 0; i < 6; i++) {
+            AT24C32_WriteByte(0x0100 + i, new_pwd[i]);
+            admin_pwd[i] = new_pwd[i];
+        }
+        OLED_Clear();
+        OLED_ShowString(20, 2, (uint8_t*)"PWD Changed!");
+        HAL_Delay(1500);
+    }
+}
+
+// 6. 新增：清空所有数据
+void Process_EmptyFR(void) {
+    OLED_Clear();
+    OLED_ShowString(0, 0, (uint8_t*)"Delete All FR?");
+    OLED_ShowString(0, 2, (uint8_t*)"15: YES");
+    OLED_ShowString(0, 4, (uint8_t*)"16: NO");
+    while(1) {
+        uint8_t key = Key_Scan();
+        if (key == KEY_MENU_ENTER) { // 15
+            OLED_Clear();
+            OLED_ShowString(10, 2, (uint8_t*)"Clearing...");
+            GZ_Empty();
+            ValidN = 0;
+            recordCount = 0;
+            AT24C32_WriteByte(0x0000, 0); 
+            AT24C32_WriteByte(0x0001, 0);
+            OLED_Clear();
+            OLED_ShowString(20, 2, (uint8_t*)"All Cleared!");
+            HAL_Delay(1500);
+            break;
+        } else if (key == KEY_MENU_EXIT) { // 16
+            break;
+        }
+        HAL_Delay(50);
+    }
+}
+
+// 7. 新增：每周重置 (清空所有人的时长和打卡流水，但不删指纹)
+void Process_ResetTime(void) {
+    OLED_Clear();
+    OLED_ShowString(0, 0, (uint8_t*)"Reset Wkly Time?");
+    OLED_ShowString(0, 2, (uint8_t*)"15: YES");
+    OLED_ShowString(0, 4, (uint8_t*)"16: NO");
+    
+    while(1) {
+        uint8_t key = Key_Scan();
+        if (key == KEY_MENU_ENTER) { // 按下了 15 确认键
+            OLED_Clear();
+            OLED_ShowString(10, 2, (uint8_t*)"Resetting...");
+            
+            // 1. 遍历清空 1~300 号的所有累计时长 (写入 EEPROM 需要约 3 秒，请耐心等待)
+            for (uint16_t i = 1; i <= 300; i++) {
+                SaveTotalDuration(i, 0); 
+            }
+            
+            // 2. 顺手清空所有的流水记录，防止 580 条空间存满报错
+            recordCount = 0;
+            AT24C32_WriteByte(0x0000, 0); 
+            AT24C32_WriteByte(0x0001, 0);
+            
+            OLED_Clear();
+            OLED_ShowString(20, 2, (uint8_t*)"Time Reset OK!");
+            HAL_Delay(1500);
+            break;
+        } else if (key == KEY_MENU_EXIT) { // 按下了 16 取消键
+            break;
+        }
+        HAL_Delay(50);
+    }
+}
+
 
 // ================== EEPROM 底层驱动 (HAL 库重写) ==================
 uint8_t AT24C32_Check(void)
@@ -675,7 +743,7 @@ uint8_t SaveRecord(uint16_t id)
     if (recordCount >= 580) return 0;
 
     MYRTC_ReadTime();
-    uint32_t current_time = MYRTC_Time[3] * 60 + MYRTC_Time[4] + MYRTC_Time[5]; // 小时转分钟 + 分钟
+    uint32_t current_time = MYRTC_Time[3] * 3600 + MYRTC_Time[4] * 60 + MYRTC_Time[5];
     uint8_t determined_type = 0;
     uint32_t last_check_in = 0;
 
@@ -764,22 +832,10 @@ int main(void)
       recordCount = 0;
   }
 
-  Menu_ShowMain();
-
-
+  // 初始化密码缓存
+  InitAdminPassword(); 
   
-
-// --- 暴力测试开始 ---
-uint32_t force_val = 60; // 强行存入 60 秒
-uint8_t test_buf[4] = {0, 0, 0, 60}; 
-
-// 直接用最原始的 HAL 库命令写一次
-HAL_I2C_Mem_Write(&hi2c1, 0xAE, 0x0E00 + (5 * 4), I2C_MEMADD_SIZE_16BIT, test_buf, 4, 100);
-HAL_Delay(20); // 必须等！
-
-// --- 暴力测试结束 ---
-
-
+  Menu_ShowMain();
 
 
   /* USER CODE END 2 */
@@ -788,23 +844,84 @@ HAL_Delay(20); // 必须等！
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
-    /* USER CODE BEGIN 3 */
     uint8_t key = Key_Scan();
-    if (key != 0) {
-      if (key == KEY_ADD) Process_AddFR();
-      else if (key == KEY_LIST) Process_ListFR();
-      else if (key == KEY_DEL_SPEC) Process_DelFR();
-      else if (key == KEY_MOD_NAME) Process_ModName();
-      else if (key == 8) Send_All_Ranks_To_Bluetooth();
-    } else {
-      press_FR();
+
+    // ==========================================================
+    // 【模式 0】：待机打卡模式 
+    // ==========================================================
+    if (system_mode == 0) 
+    {
+        if (key == KEY_MENU_EXIT) // 16 键：申请进菜单
+        {
+            char input_pwd[7];
+            if (InputPassword(input_pwd, 7)) {
+                if (strcmp(input_pwd, admin_pwd) == 0) {
+                    system_mode = 1; 
+                    menu_cursor = 0;
+                    menu_offset = 0;
+                    OLED_Clear();
+                    UI_DrawMenu();   
+                } else {
+                    OLED_Clear();
+                    OLED_ShowString(16, 2, (uint8_t*)"Wrong PWD!");
+                    HAL_Delay(1500);
+                    Menu_ShowMain();
+                }
+            } else {
+                Menu_ShowMain(); 
+            }
+        } 
+        else if (key == 0) 
+        {
+            press_FR(); // 没按键时扫描指纹
+        }
+    }
+    // ==========================================================
+    // 【模式 1】：后台管理菜单模式
+    // ==========================================================
+    else if (system_mode == 1) 
+    {
+        if (key != 0) 
+        {
+            if (key == KEY_UP) // 13 上
+            {
+                if (menu_cursor > 0) menu_cursor--;
+                if (menu_cursor < menu_offset) menu_offset = menu_cursor; 
+                UI_DrawMenu();
+            }
+            else if (key == KEY_DOWN) // 14 下
+            {
+                if (menu_cursor < MENU_ITEM_COUNT - 1) menu_cursor++;
+                if (menu_cursor > menu_offset + 2) menu_offset = menu_cursor - 2;
+                UI_DrawMenu();
+            }
+            else if (key == KEY_MENU_ENTER) // 15 确认进入功能
+            {
+                OLED_Clear(); 
+                switch(menu_cursor) {
+                    case 0: Process_AddFR(); break;
+                    case 1: Process_DelFR(); break;
+                    case 2: Process_ModName(); break;
+                    case 3: Process_ListFR(); break;
+                    case 4: Process_ChangePwd(); break;
+                    case 5: Process_EmptyFR(); break;
+                    case 6: Process_ResetTime(); break;
+                }
+                OLED_Clear();
+                UI_DrawMenu(); 
+            }
+            else if (key == KEY_MENU_EXIT) // 16 退出菜单
+            {
+                system_mode = 0; 
+                Menu_ShowMain(); 
+            }
+        }
     }
 
     Bluetooth_Process();
     HAL_Delay(50);
-    /* USER CODE END 3 */
   }
+  /* USER CODE END WHILE */
 }
 
 /**
@@ -845,9 +962,8 @@ void SystemClock_Config(void)
 
 
 
-
 /**
-  * @brief  一键发送所有人的打卡排行榜到手机
+  * @brief  一键发送所有人的打卡排行榜到手机 (修复字节序和乱码Bug版)
   */
 void Send_All_Ranks_To_Bluetooth(void)
 {
@@ -857,19 +973,15 @@ void Send_All_Ranks_To_Bluetooth(void)
     OLED_Clear();
     OLED_ShowString(0, 2, (uint8_t*)"Sending...");
 
-    // 🚀【核心测试：强行发一个 99 号员工，时长 3600 秒】
-    // 如果手机收到了这个，说明整个蓝牙通道、小程序解析全部是完美的！
-    char test_msg[] = "USER:99,TOTAL:3600\n"; 
-    HAL_UART_Transmit(&huart3, (uint8_t*)test_msg, strlen(test_msg), 100);
-    HAL_Delay(100); // 给蓝牙一点喘息时间
-
-    // 原有的遍历逻辑
     for(uint16_t id = 1; id <= ValidN; id++) 
     {
-        uint16_t addr = 0x0E00 + (id * 4);
-        HAL_I2C_Mem_Read(&hi2c1, 0xA0, addr, I2C_MEMADD_SIZE_16BIT, (uint8_t*)&total_duration, 4, 100);
+        // 🔴 修复1：坚决使用写好的 ReadTotalDuration 函数
+        // 它内部自带了正确的字节重组逻辑，绝不反转！
+        total_duration = ReadTotalDuration(id);
         
-        if(total_duration > 0)
+        // 🔴 修复2：过滤掉没有打过卡的初始乱码数据 (EEPROM 默认是 0xFFFFFFFF)
+        // 只有时长大于 0，且不是乱码的，才发给手机
+        if(total_duration > 0 && total_duration != 0xFFFFFFFF)
         {
             sprintf(buffer, "USER:%02d,TOTAL:%lu\n", id, total_duration);
             HAL_UART_Transmit(&huart3, (uint8_t*)buffer, strlen(buffer), 100);
@@ -880,10 +992,7 @@ void Send_All_Ranks_To_Bluetooth(void)
     OLED_Clear();
     OLED_ShowString(0, 2, (uint8_t*)"Send OK!");
     HAL_Delay(1000);
-    Menu_ShowMain();
 }
-
-
 
 
 
@@ -941,4 +1050,3 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
-
