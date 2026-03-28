@@ -11,12 +11,14 @@ static void Com_SendData(uint8_t data)
 {
 	HAL_UART_Transmit(&huart1,&data, 1,50);
 }
+
 //发送包头
 static void SendHead(void)
 {
 	Com_SendData(0xEF);
 	Com_SendData(0x01);
 }
+
 //发送地址
 static void SendAddr(void)
 {

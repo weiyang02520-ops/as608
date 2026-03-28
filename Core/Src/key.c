@@ -34,7 +34,8 @@ uint8_t res;
 
 
 // 字母表：键1~8对应的字母
-static const char keyLetters[8][5] = {
+static const char keyLetters[8][5] = 
+{
     {'A','B','C',0},
     {'D','E','F',0},
     {'G','H','I',0},
@@ -143,6 +144,8 @@ uint8_t InputName(char *name, uint8_t maxLen)
     				{
     					name[pos++]=keyLetters[currentKey][letterIndex];
     					name[pos]=0;
+                        for (uint8_t i = len; i < 16; i++)
+                            OLED_ShowChar(i*8, 3, ' ');
     					OLED_ShowString(0,2,(uint8_t*)name);
 
     				}
@@ -190,13 +193,17 @@ uint8_t InputName(char *name, uint8_t maxLen)
                     name[pos] = 0;
                     currentKey = 0;
                     OLED_Clear();
-                    OLED_ShowString(0, 0, (uint8_t*)"Input Name:");
+                    OLED_ShowCHinese(0, 0, 37); //输
+                    OLED_ShowCHinese(16, 0, 38); //入
+                    OLED_ShowCHinese(32, 0, 33); //名
+                    OLED_ShowCHinese(48, 0, 34);//字
                     ShowName(name, pos);
+
                 }
     		}
             else if (key == KEY_CONFIRM) // 确认
             {
-                // 如果还有未提交的候选字母，先提交
+           
                 if (currentKey != 0 && pos < maxLen-1)
                 {
                     name[pos++] = keyLetters[currentKey-1][letterIndex];
@@ -334,7 +341,11 @@ uint8_t InputPassword(char *pwd, uint8_t maxLen)
 
     OLED_Clear();
 
-    OLED_ShowString(0, 0, (uint8_t*)"Enter Password:");
+    OLED_ShowCHinese(0, 0, 17); // 请
+    OLED_ShowCHinese(16, 0, 37); // 输
+    OLED_ShowCHinese(32, 0, 38); // 入
+    OLED_ShowCHinese(48, 0, 46); // 密
+    OLED_ShowCHinese(64, 0, 47); // 码
 
     OLED_ShowString(0, 2, (uint8_t*)"______");
 
@@ -345,7 +356,7 @@ uint8_t InputPassword(char *pwd, uint8_t maxLen)
         {
             uint8_t digit = 0;
 
-            // 数字键映射：
+            // 数字键：键1-8 => 1-8, 键9 => 9, 键10 => 0
             // 键1~8  数字1~8
             if (key >= 1 && key <= 8)
             {
@@ -463,7 +474,7 @@ uint16_t InputNumber(uint8_t maxDigits, uint8_t x, uint8_t y)
 
 
 
-// ==================== 蓝牙处理代码开始 ====================
+
 void Bluetooth_Init(void)
 {
     // 强制开启 USART3 的中断通道
@@ -478,6 +489,8 @@ void Bluetooth_Init(void)
 }
 
 // 防死锁：万一被垃圾数据卡死，自动复活！
+// 这个函数在 USART3 的中断服务程序里被调用
+// 这个函数不需要在 main 循环里调用，因为它是 USART3 的中断回调函数
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART3)
@@ -488,6 +501,8 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 }
 
 // 串口接收完成回调
+// 这个函数在 USART3 收到一个字节时被调用
+// 它会把接收到的字节存入 bt_rx_buf，并设置 bt_rx_complete 标志，通知主循环有新数据了
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART3)
@@ -509,6 +524,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 }
 
 // 主循环中调用
+// 这个函数会检查 bt_rx_complete 标志，如果有新数据了，就处理它
+// 处理完后会清空缓冲区，准备下一次接收void Bluetooth_Process(void)
 void Bluetooth_Process(void)
 {
     if (bt_rx_complete)
@@ -533,14 +550,18 @@ void Bluetooth_Process(void)
                 MYRTC_SetTime();
 
                 OLED_Clear();
-                OLED_ShowString(20, 2, (uint8_t*)"Time OK!");
+                OLED_ShowCHinese(16, 2, 11); // 成
+                OLED_ShowCHinese(64, 2, 12); // 功
                 HAL_Delay(1000);
             }
-        }
-        
-        // 2. 【👇这是新增的灵魂逻辑👇】处理索要排行榜指令
-        else if (strstr((char*)bt_rx_buf, "GET_RANK") != NULL) {
+        }        
+        // 2.处理索要排行榜指令
+        else if (strstr((char*)bt_rx_buf, "GET_RANK") != NULL) 
+        {
             // 收到手机呼叫，立刻启动“全量数据上报”大招
+            // 这个函数会把所有用户的累计打卡时长发送给手机，格式是 "USER:XX,TOTAL:YYYYY\n"
+            // 你可以在手机端解析这个数据，显示排行榜或者做其他处理
+            // 这个函数内部已经处理了字节序和乱码问题，确保发送的数据是正确的累计时长，而不是乱码
             Send_All_Ranks_To_Bluetooth();
         }
 
@@ -550,4 +571,4 @@ void Bluetooth_Process(void)
         bt_rx_complete = 0;
     }
 }
-// ==================== 蓝牙处理代码结束 ====================
+

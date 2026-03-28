@@ -3,9 +3,9 @@
 #include "main.h"
 
 
-#define GZ_Sta   PAin(6)//读指纹模块状态引脚
-#define CharBuffer1 0x01
-#define CharBuffer2 0x02
+#define GZ_Sta   PAin(6)//读指纹模块状态引脚  WAK（唤醒/状态）引脚 当手指触摸感应窗时，这个引脚会电平跳变。
+#define CharBuffer1 0x01//第一次采集的特征
+#define CharBuffer2 0x02//第二次采集的特征
 
 extern uint32_t AS608Addr;//模块地址
 
@@ -13,7 +13,7 @@ typedef struct
 {
 	uint16_t pageID;//指纹ID
 	uint16_t mathscore;//匹配得分
-}SearchResult;
+}SearchResult;//搜索结果包
 
 typedef struct
 {
@@ -22,7 +22,7 @@ typedef struct
 	uint32_t GZ_addr;
 	uint8_t  GZ_size;//通讯数据包大小
 	uint8_t  GZ_N;//波特率基数N
-}SysPara;
+}SysPara;//系统参数包
 
 void GZ_StaGPIO_Init(void);//初始化PA6读状态引脚
 
