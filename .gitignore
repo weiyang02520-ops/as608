@@ -22,3 +22,6 @@ Release/
 
 # 排除本地软备份
 README_backups/
+
+# 排除微信开发者工具本机私有配置
+wechat-miniprogram/project.private.config.json
