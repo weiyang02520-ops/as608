@@ -25,3 +25,6 @@ README_backups/
 
 # 排除微信开发者工具本机私有配置
 wechat-miniprogram/project.private.config.json
+
+# Local skill packaging workspace
+.skill-staging/
