@@ -19,3 +19,6 @@ Release/
 # 排除 IDE 的本地设置
 .settings/
 .vscode/
+
+# 排除本地软备份
+README_backups/
