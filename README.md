@@ -8,6 +8,7 @@
 ![Client](https://img.shields.io/badge/client-WeChat_Mini_Program-07C160)
 ![Storage](https://img.shields.io/badge/storage-AT24C32_EEPROM-805AD5)
 ![Status](https://img.shields.io/badge/status-active_development-F6AD55)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 ## 项目简介
 
@@ -364,7 +365,7 @@ git clone https://github.com/weiyang02520-ops/as608.git
 - 指纹 ID 当前按有效模板数量递增，删除中间 ID 后再次新增时需要注意覆盖风险。
 - AS608 应答包解析仍可优化，建议后续改成基于长度和校验和的二进制协议解析。
 - EEPROM 地址规划建议在正式长期使用前重构。
-- 本仓库暂未指定开源许可证；如果希望他人明确复用、修改和分发，建议补充 `LICENSE` 文件。
+- 本项目以 MIT License 开源，使用者可以自由学习、修改、分发和二次开发，但需保留原版权声明和许可证文本。
 
 ## 开发记录
 
@@ -377,4 +378,4 @@ git clone https://github.com/weiyang02520-ops/as608.git
 
 ## License
 
-No license has been selected yet. Please add a `LICENSE` file before using this repository as a formal open-source distribution.
+This project is open-sourced under the [MIT License](LICENSE).
